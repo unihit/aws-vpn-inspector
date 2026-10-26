@@ -2,11 +2,20 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
 from vpn_models import VpnDiagnosticResult, ConnectivityTests
 from diagnostic_engine import DiagnosticEngine
 
 app = FastAPI(title="AWS Site-to-Site VPN Connectivity Inspector", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(current_dir, "templates"))
@@ -26,6 +35,11 @@ async def get_scenario(name: str):
 async def get_profiles():
     """머신에 설정된 AWS CLI 프로필 목록"""
     return {"profiles": engine.list_available_profiles()}
+
+@app.get("/api/aws/identity")
+async def get_identity(profile: str = "default", region: str = "ap-northeast-2"):
+    """선택한 프로필의 STS GetCallerIdentity 인증 상태 반환"""
+    return engine.get_caller_identity(profile_name=profile, region_name=region)
 
 @app.get("/api/aws/vpns")
 async def get_vpns(profile: str = "default", region: str = "ap-northeast-2"):

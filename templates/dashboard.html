@@ -33,6 +33,9 @@
         </div>
       </div>
       <div class="flex items-center space-x-2">
+        <a href="https://raw.githubusercontent.com/unihit/aws-vpn-inspector/main/run.bat" download="run.bat" class="px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-xs transition flex items-center gap-1.5" title="내 PC에서 로컬 AWS 인증을 즉시 연동하는 원클릭 배치 파일 다운로드">
+          <i class="fa-solid fa-download"></i> run.bat 다운로드
+        </a>
         <button onclick="window.print()" class="px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-xs transition flex items-center gap-1.5">
           <i class="fa-solid fa-file-pdf text-rose-500"></i> 리포트 인쇄 / PDF 저장
         </button>
@@ -68,13 +71,19 @@
         </div>
       </div>
 
+      <!-- Agent Connection Status Banner -->
+      <div id="agent-status-banner" class="hidden px-3.5 py-2 rounded-lg text-xs flex items-center justify-between transition"></div>
+
       <!-- AWS Profile & Target IP Live Config Grid -->
       <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 text-xs space-y-3">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <label class="block font-semibold text-slate-700 mb-1">
-              <i class="fa-brands fa-aws text-orange-500"></i> AWS CLI Profile
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="font-semibold text-slate-700">
+                <i class="fa-brands fa-aws text-orange-500"></i> AWS CLI Profile
+              </label>
+              <span id="aws-auth-badge" class="text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-200 text-slate-600">감지 대기</span>
+            </div>
             <select id="select-aws-profile" onchange="onProfileOrRegionChange()" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
               <option value="default">default</option>
             </select>
@@ -328,6 +337,65 @@
   <!-- JavaScript Application Logic -->
   <script>
     let currentData = null;
+    let apiBase = window.location.origin.includes('github.io') ? 'http://127.0.0.1:8085' : '';
+    let isLocalAgentConnected = false;
+
+    // Check Local Agent Connection (for GitHub Pages & Localhost)
+    async function checkAgentConnection() {
+      const banner = document.getElementById('agent-status-banner');
+      try {
+        const resp = await fetch(`${apiBase}/api/aws/profiles`, { signal: AbortSignal.timeout(1500) });
+        if (resp.ok) {
+          isLocalAgentConnected = true;
+          if (banner) {
+            banner.className = "px-3.5 py-2 rounded-lg text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-between";
+            banner.innerHTML = `<span><i class="fa-solid fa-circle-check text-emerald-500"></i> <b>로컬 에이전트(포트 8085) 연결됨:</b> 내 PC의 AWS 자격 증명(~/.aws)이 활성화되었습니다.</span><span class="text-[10px] text-emerald-600 font-mono">127.0.0.1:8085</span>`;
+            banner.classList.remove('hidden');
+          }
+          return true;
+        }
+      } catch (e) {
+        isLocalAgentConnected = false;
+        if (banner && window.location.origin.includes('github.io')) {
+          banner.className = "px-3.5 py-2 rounded-lg text-xs bg-amber-50 text-amber-800 border border-amber-200 flex items-center justify-between";
+          banner.innerHTML = `<span><i class="fa-solid fa-circle-info text-amber-500"></i> <b>데모 시뮬레이션 모드:</b> 내 PC의 실제 AWS 계정과 연동하려면 상단 <b>[run.bat 다운로드]</b>를 실행하세요.</span><a href="https://raw.githubusercontent.com/unihit/aws-vpn-inspector/main/run.bat" download="run.bat" class="underline font-bold text-amber-900">run.bat 받기</a>`;
+          banner.classList.remove('hidden');
+        }
+      }
+      return false;
+    }
+
+    // Check AWS STS Caller Identity
+    async function checkAwsIdentity() {
+      const badge = document.getElementById('aws-auth-badge');
+      const profile = document.getElementById('select-aws-profile').value;
+      const region = document.getElementById('select-aws-region').value;
+      if (!isLocalAgentConnected && window.location.origin.includes('github.io')) {
+        if (badge) {
+          badge.className = "text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-100 text-slate-500";
+          badge.innerText = "Mock Demo";
+        }
+        return;
+      }
+      try {
+        const resp = await fetch(`${apiBase}/api/aws/identity?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
+        const data = await resp.json();
+        if (data.status === 'AUTHENTICATED') {
+          badge.className = "text-[10px] px-1.5 py-0.2 rounded font-bold bg-emerald-100 text-emerald-800";
+          badge.innerText = `✓ 계정: ${data.account}`;
+          badge.title = `ARN: ${data.arn}`;
+        } else if (data.status === 'EXPIRED') {
+          badge.className = "text-[10px] px-1.5 py-0.2 rounded font-bold bg-amber-100 text-amber-800";
+          badge.innerText = `⚠️ SSO 세션 만료`;
+          badge.title = data.error;
+        } else {
+          badge.className = "text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-200 text-slate-700";
+          badge.innerText = `자격증명 미설정`;
+        }
+      } catch (e) {
+        if (badge) badge.innerText = "연동 대기";
+      }
+    }
 
     const FALLBACK_SCENARIOS = {
       normal: {
@@ -451,7 +519,7 @@
       }
 
       try {
-        const resp = await fetch(`/api/scenario/${name}`);
+        const resp = await fetch(`${apiBase}/api/scenario/${name}`);
         if (resp.ok) {
           currentData = await resp.json();
         } else {
@@ -466,7 +534,7 @@
     // Load AWS CLI Profiles
     async function loadAwsProfiles() {
       try {
-        const resp = await fetch('/api/aws/profiles');
+        const resp = await fetch(`${apiBase}/api/aws/profiles`);
         const data = await resp.json();
         const sel = document.getElementById('select-aws-profile');
         if (data.profiles && data.profiles.length > 0) {
@@ -478,6 +546,7 @@
     }
 
     async function onProfileOrRegionChange() {
+      await checkAwsIdentity();
       await fetchAccountVpns();
       await fetchAccountInstances();
     }
@@ -487,7 +556,7 @@
       const region = document.getElementById('select-aws-region').value;
       const instSel = document.getElementById('select-aws-instance');
       try {
-        const resp = await fetch(`/api/aws/instances?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
+        const resp = await fetch(`${apiBase}/api/aws/instances?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
         const data = await resp.json();
         if (data.instances && data.instances.length > 0) {
           instSel.innerHTML = data.instances.map(inst => 
@@ -505,7 +574,7 @@
       const profile = document.getElementById('select-aws-profile').value;
       const region = document.getElementById('select-aws-region').value;
       try {
-        const resp = await fetch(`/api/aws/vpns?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
+        const resp = await fetch(`${apiBase}/api/aws/vpns?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
         const data = await resp.json();
         if (data.vpns && data.vpns.length > 0) {
           const vpnInput = document.getElementById('input-vpn-id');
@@ -532,7 +601,7 @@
       const bastionId = document.getElementById('select-aws-instance').value;
 
       try {
-        let url = `/api/diagnose?profile_name=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}&target_ip=${encodeURIComponent(targetIp)}`;
+        let url = `${apiBase}/api/diagnose?profile_name=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}&target_ip=${encodeURIComponent(targetIp)}`;
         if (vpnId) url += `&vpn_id=${encodeURIComponent(vpnId)}`;
         if (bastionId) url += `&bastion_instance_id=${encodeURIComponent(bastionId)}`;
 
@@ -737,7 +806,9 @@
 
     // Initial Load default to Warning Scenario
     window.addEventListener('DOMContentLoaded', async () => {
+      await checkAgentConnection();
       await loadAwsProfiles();
+      await checkAwsIdentity();
       await fetchAccountInstances();
       loadScenario('warning');
     });

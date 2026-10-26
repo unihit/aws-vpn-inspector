@@ -148,6 +148,24 @@ class DiagnosticEngine:
         except Exception:
             return ["default"]
 
+    def get_caller_identity(self, profile_name: str = "default", region_name: str = "ap-northeast-2") -> dict:
+        """선택된 AWS 프로필의 STS GetCallerIdentity 인증 상태 반환"""
+        try:
+            session = boto3.Session(profile_name=profile_name, region_name=region_name)
+            sts = session.client("sts")
+            identity = sts.get_caller_identity()
+            return {
+                "status": "AUTHENTICATED",
+                "account": identity.get("Account"),
+                "arn": identity.get("Arn"),
+                "user_id": identity.get("UserId")
+            }
+        except Exception as e:
+            err_msg = str(e)
+            if "ExpiredToken" in err_msg or "expired" in err_msg.lower():
+                return {"status": "EXPIRED", "error": "AWS SSO/세션 토큰이 만료되었습니다. (aws sso login 필요)"}
+            return {"status": "UNAUTHENTICATED", "error": err_msg}
+
     def list_running_instances(self, profile_name: str = "default", region: str = "ap-northeast-2") -> List[dict]:
         """지정된 AWS Profile 및 Region에서 실행 중인 EC2 인스턴스(Bastion 후보) 목록 조회"""
         try:
