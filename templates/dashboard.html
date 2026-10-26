@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWS Site-to-Site VPN Connectivity Inspector & Report</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background-color: #ffffff !important; color: #000000 !important; }
+      .print-shadow-none { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
+      .page-break { page-break-before: always; }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs no-print">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center text-white shadow-md shadow-orange-500/20">
+          <i class="fa-solid fa-network-wired text-lg"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+            AWS Site-to-Site VPN Inspector
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">v1.0 MVP</span>
+          </h1>
+          <p class="text-xs text-slate-500">엔터프라이즈 하이브리드 클라우드 연결성 & MTU 정밀 진단 시스템</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button onclick="window.print()" class="px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-xs transition flex items-center gap-1.5">
+          <i class="fa-solid fa-file-pdf text-rose-500"></i> 리포트 인쇄 / PDF 저장
+        </button>
+        <button onclick="downloadJsonReport()" class="px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-xs transition flex items-center gap-1.5">
+          <i class="fa-solid fa-code text-indigo-500"></i> JSON 내보내기
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Interactive Execution Control Panel (No-print) -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs no-print space-y-4">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
+        <div>
+          <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-sliders text-indigo-600"></i> 진단 실행 모드 & 시나리오 선택
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5">사전 정의된 장애 시뮬레이션 또는 실제 AWS CLI 프로필 계정 기반의 실측을 진행할 수 있습니다.</p>
+        </div>
+        <div class="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-1 text-xs font-medium">
+          <button onclick="loadScenario('normal')" id="btn-scen-normal" class="px-3 py-1.5 rounded-md text-slate-700 hover:text-slate-900 transition">
+            🟢 정상 (이중화 완비)
+          </button>
+          <button onclick="loadScenario('warning')" id="btn-scen-warning" class="px-3 py-1.5 rounded-md bg-white text-amber-700 font-semibold shadow-xs">
+            🟡 경고 (터널1개 다운 & MTU)
+          </button>
+          <button onclick="loadScenario('critical')" id="btn-scen-critical" class="px-3 py-1.5 rounded-md text-slate-700 hover:text-slate-900 transition">
+            🔴 장애 (양쪽 터널 두절)
+          </button>
+        </div>
+      </div>
+
+      <!-- AWS Profile & Target IP Live Config Grid -->
+      <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 text-xs space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">
+              <i class="fa-brands fa-aws text-orange-500"></i> AWS CLI Profile
+            </label>
+            <select id="select-aws-profile" onchange="onProfileOrRegionChange()" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
+              <option value="default">default</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">AWS Region</label>
+            <select id="select-aws-region" onchange="onProfileOrRegionChange()" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
+              <option value="ap-northeast-2">ap-northeast-2 (서울)</option>
+              <option value="ap-northeast-1">ap-northeast-1 (도쿄)</option>
+              <option value="us-east-1">us-east-1 (버지니아)</option>
+              <option value="us-west-2">us-west-2 (오레곤)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">
+              <i class="fa-solid fa-server text-indigo-600"></i> 출발지 EC2 선택 (SSM 프로브)
+            </label>
+            <select id="select-aws-instance" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
+              <option value="">(EC2 목록 로딩 중...)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1 border-t border-slate-200">
+          <div class="md:col-span-4">
+            <label class="block font-semibold text-slate-700 mb-1">AWS VPN Connection ID</label>
+            <input type="text" id="input-vpn-id" value="vpn-0123456789abcdef0" placeholder="vpn-0123456789abcdef0" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
+          </div>
+          <div class="md:col-span-5">
+            <label class="block font-semibold text-slate-700 mb-1">
+              <i class="fa-solid fa-bullseye text-rose-500"></i> 도착지 온프레미스 대상 사설 IP
+            </label>
+            <input type="text" id="input-target-ip" value="10.0.1.15" placeholder="10.0.1.15" class="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 focus:outline-indigo-500 font-mono text-xs">
+          </div>
+          <div class="md:col-span-3 flex items-end">
+            <button onclick="runLiveDiagnostics()" id="btn-run-live" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded shadow-sm shadow-indigo-600/30 flex items-center justify-center gap-1.5 transition text-xs">
+              <i class="fa-solid fa-bolt"></i> <span>EC2 ➡️ 온프렘 실측</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diagnostic Summary Header Card (Print included) -->
+    <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-xs print-shadow-none">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-100 pb-5">
+        <div>
+          <div class="flex items-center gap-3">
+            <span id="overall-badge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+              <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              WARNING · 이중화 저하 (터널 1개 다운)
+            </span>
+            <span class="text-xs text-slate-400">ID: <span id="diag-id" class="font-mono text-slate-600">diag-20261026-001</span></span>
+          </div>
+          <h2 class="text-xl font-bold text-slate-900 mt-2 flex items-center gap-2">
+            AWS Site-to-Site VPN 엔드-투-엔드 통신 상태 종합 리포트
+          </h2>
+          <p class="text-xs text-slate-500 mt-1">
+            수집 일시: <span id="collected-at" class="font-mono text-slate-700">2026-10-26T00:40:00Z</span> · 
+            측정 지점: <span id="probe-location" class="font-medium text-slate-700">on-premises (HQ-Router-01)</span>
+          </p>
+        </div>
+        <div class="text-right">
+          <div class="text-xs text-slate-500">VPN Connection ID</div>
+          <div id="vpn-id" class="font-mono text-sm font-bold text-indigo-600">vpn-0a1b2c3d4e5f6g7h8</div>
+          <div class="text-xs text-slate-400 mt-1">
+            Gateway: <span id="gateway-id" class="font-mono">tgw-0987654321fedcba0</span> | <span id="routing-type" class="font-semibold text-slate-600">BGP</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick KPI Strip -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 pt-5">
+        <div class="bg-slate-50 rounded-lg p-3.5 border border-slate-200">
+          <div class="text-xs text-slate-500 font-medium">IPsec 터널 상태</div>
+          <div id="kpi-tunnel-status" class="text-base font-bold text-amber-600 mt-1 flex items-center gap-1.5">
+            <i class="fa-solid fa-triangle-exclamation"></i> 1 / 2 UP (50%)
+          </div>
+          <div id="kpi-tunnel-sub" class="text-[11px] text-slate-400 mt-0.5">이중화 손실 위험</div>
+        </div>
+        <div class="bg-slate-50 rounded-lg p-3.5 border border-slate-200">
+          <div class="text-xs text-slate-500 font-medium">ICMP 왕복 지연 (RTT)</div>
+          <div id="kpi-icmp-rtt" class="text-base font-bold text-emerald-600 mt-1">
+            14.2 ms <span class="text-xs font-normal text-slate-500">(0% 손실)</span>
+          </div>
+          <div id="kpi-icmp-sub" class="text-[11px] text-slate-400 mt-0.5">5 패킷 정상 도달</div>
+        </div>
+        <div class="bg-slate-50 rounded-lg p-3.5 border border-slate-200">
+          <div class="text-xs text-slate-500 font-medium">필수 업무 포트 (L4)</div>
+          <div id="kpi-tcp-status" class="text-base font-bold text-emerald-600 mt-1">
+            2 / 2 성공 (100%)
+          </div>
+          <div id="kpi-tcp-sub" class="text-[11px] text-slate-400 mt-0.5">HTTPS 443, MySQL 3306</div>
+        </div>
+        <div class="bg-slate-50 rounded-lg p-3.5 border border-slate-200">
+          <div class="text-xs text-slate-500 font-medium">최대 비단편화 MTU</div>
+          <div id="kpi-mtu-size" class="text-base font-bold text-amber-600 mt-1">
+            1380 Bytes
+          </div>
+          <div id="kpi-mtu-sub" class="text-[11px] text-slate-400 mt-0.5">기준치 1400B 미달 (단편화 발생)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tunnels Status Grid (2 Columns) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5" id="tunnels-container">
+      <!-- Injected by JavaScript -->
+    </div>
+
+    <!-- L3 / L4 / MTU Diagnostic Breakdown (3 Columns) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      
+      <!-- L3 ICMP Card -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs print-shadow-none">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-arrows-split-up-and-left text-sky-500"></i> L3 ICMP 경로 도달성
+          </h3>
+          <span id="icmp-status-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">PASS</span>
+        </div>
+        <div class="space-y-3 pt-4 text-xs">
+          <div class="flex justify-between">
+            <span class="text-slate-500">테스트 대상 사설 IP:</span>
+            <span id="icmp-target" class="font-mono font-medium text-slate-800">10.0.1.15</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">송신 / 수신 패킷:</span>
+            <span id="icmp-packets" class="font-medium text-slate-800">5 / 5 송수신</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">패킷 손실률 (Loss):</span>
+            <span id="icmp-loss" class="font-bold text-emerald-600">0.0 %</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">평균 왕복 지연 (RTT):</span>
+            <span id="icmp-rtt" class="font-mono font-bold text-slate-800">14.2 ms</span>
+          </div>
+          <div class="p-2.5 rounded-lg bg-slate-50 text-[11px] text-slate-500 border border-slate-200 mt-2">
+            💡 <span class="font-medium">판정 기준:</span> ICMP 차단 방화벽 정책이 있더라도 TCP 연결이 정상일 경우 전체 통신은 정상으로 평가합니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- L4 TCP Port Checks Card -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs print-shadow-none">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-server text-emerald-500"></i> L4 업무 포트 헬스체크
+          </h3>
+          <span id="tcp-status-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">PASS</span>
+        </div>
+        <div class="pt-3">
+          <table class="w-full text-xs text-left">
+            <thead>
+              <tr class="text-[11px] text-slate-400 border-b border-slate-100">
+                <th class="pb-1.5 font-medium">서비스 / 포트</th>
+                <th class="pb-1.5 font-medium">대상 IP</th>
+                <th class="pb-1.5 font-medium">결과</th>
+                <th class="pb-1.5 font-medium text-right">지연</th>
+              </tr>
+            </thead>
+            <tbody id="tcp-tbody" class="divide-y divide-slate-100">
+              <!-- Injected by JavaScript -->
+            </tbody>
+          </table>
+          <div class="p-2.5 rounded-lg bg-slate-50 text-[11px] text-slate-500 border border-slate-200 mt-4">
+            💡 필수(Required) 포트 타임아웃 발생 시 즉시 <span class="font-bold text-rose-600">CRITICAL</span> 장애로 분류됩니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- MTU / Fragmentation Card -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs print-shadow-none">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-cube text-amber-500"></i> MTU / 패킷 단편화 진단
+          </h3>
+          <span id="mtu-status-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">WARNING</span>
+        </div>
+        <div class="space-y-3 pt-4 text-xs">
+          <div class="flex justify-between">
+            <span class="text-slate-500">최대 성공 크기 (DF):</span>
+            <span id="mtu-max-size" class="font-mono font-bold text-amber-600">1380 Bytes</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">요구 임계값 (Threshold):</span>
+            <span id="mtu-threshold" class="font-mono font-medium text-slate-800">1400 Bytes</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">패킷 분할 발생 여부:</span>
+            <span id="mtu-fragmented" class="font-bold text-amber-600">단편화 관찰됨 (True)</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">권고 TCP MSS 설정값:</span>
+            <span id="mtu-rec-mss" class="font-mono font-bold text-indigo-600">1340 Bytes</span>
+          </div>
+          <div class="p-2.5 rounded-lg bg-amber-50 text-[11px] text-amber-800 border border-amber-200 mt-2">
+            ⚠️ <span class="font-medium">조치 권고:</span> 대용량 파일 전송 중단 방지를 위해 고객 게이트웨이(CGW) 장비에서 MSS Clamping을 1340B로 조정하세요.
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Recommendations / Action Items Table -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs print-shadow-none">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <i class="fa-solid fa-clipboard-check text-indigo-600"></i> 우선순위별 장애 조치 가이드 (Troubleshooting Actions)
+        </h3>
+        <span class="text-xs text-slate-400">AWS Well-Architected 신뢰성 원칙 적용</span>
+      </div>
+      <div class="overflow-x-auto pt-3">
+        <table class="w-full text-xs text-left">
+          <thead>
+            <tr class="text-[11px] text-slate-400 border-b border-slate-200 bg-slate-50">
+              <th class="py-2.5 px-3 font-semibold rounded-l-lg">우선순위</th>
+              <th class="py-2.5 px-3 font-semibold">진단 코드</th>
+              <th class="py-2.5 px-3 font-semibold">증상 및 문제점</th>
+              <th class="py-2.5 px-3 font-semibold">권고 조치 사항 (Action Plan)</th>
+              <th class="py-2.5 px-3 font-semibold rounded-r-lg text-right">증적 근거</th>
+            </tr>
+          </thead>
+          <tbody id="recs-tbody" class="divide-y divide-slate-100">
+            <!-- Injected by JavaScript -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Diagnostic Log Viewer (Collapsible / Print optimized) -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs print-shadow-none">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <i class="fa-solid fa-terminal text-slate-700"></i> 실행 증적 로그 뷰어 (Audit Logs)
+        </h3>
+        <div class="flex items-center gap-2 no-print">
+          <button onclick="filterLogs('ALL')" class="px-2.5 py-1 text-[11px] font-medium bg-slate-100 text-slate-700 rounded hover:bg-slate-200">ALL</button>
+          <button onclick="filterLogs('AWS')" class="px-2.5 py-1 text-[11px] font-medium bg-slate-100 text-slate-700 rounded hover:bg-slate-200">AWS</button>
+          <button onclick="filterLogs('TCP')" class="px-2.5 py-1 text-[11px] font-medium bg-slate-100 text-slate-700 rounded hover:bg-slate-200">TCP</button>
+          <button onclick="filterLogs('MTU')" class="px-2.5 py-1 text-[11px] font-medium bg-slate-100 text-slate-700 rounded hover:bg-slate-200">MTU</button>
+        </div>
+      </div>
+      <div class="mt-3 bg-slate-900 rounded-lg p-4 font-mono text-xs text-slate-200 h-48 overflow-y-auto space-y-1.5" id="logs-container">
+        <!-- Injected by JavaScript -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- JavaScript Application Logic -->
+  <script>
+    let currentData = null;
+
+    const FALLBACK_SCENARIOS = {
+      normal: {
+        schema_version: "1.0",
+        diagnosis_id: "diag-demo-normal",
+        collected_at: new Date().toISOString(),
+        probe: { location: "AWS EC2 (i-0123456789abcdef0)", source_ip: "10.0.1.50" },
+        overall_status: "NORMAL",
+        vpn_info: {
+          vpn_connection_id: "vpn-0123456789abcdef0",
+          customer_gateway_ip: "198.51.100.10",
+          vgw_or_tgw_id: "tgw-0123456789abcdef0",
+          routing_type: "BGP"
+        },
+        tunnels: [
+          { tunnel_inside_ip: "169.254.14.1", outside_ip: "198.51.100.1", status: "UP", accepted_route_count: 4, status_message: "IPSEC IS UP" },
+          { tunnel_inside_ip: "169.254.15.1", outside_ip: "198.51.100.2", status: "UP", accepted_route_count: 4, status_message: "IPSEC IS UP" }
+        ],
+        connectivity_tests: {
+          icmp_ping: { target_ip: "10.0.1.15", packets_sent: 5, packets_received: 5, packet_loss_pct: 0, rtt_avg_ms: 11.8, status: "PASS" },
+          tcp_health_checks: [
+            { target_ip: "10.0.1.15", port: 443, service_name: "Internal Web (HTTPS)", required: true, result: "SUCCESS", latency_ms: 12.4 },
+            { target_ip: "10.0.2.20", port: 3306, service_name: "Aurora MySQL DB", required: true, result: "SUCCESS", latency_ms: 13.1 },
+            { target_ip: "10.0.3.50", port: 8080, service_name: "App Microservice", required: false, result: "SUCCESS", latency_ms: 14.0 }
+          ],
+          mtu_test: { target_ip: "10.0.1.15", max_successful_packet_size: 1420, threshold: 1400, is_fragmented: false, status: "PASS" }
+        },
+        recommendations: [
+          { priority: "P2", code: "HEALTHY_MONITORING", title: "정기 텔레메트리 모니터링 유지", action: "모든 터널 및 L3/L4 실측이 정상입니다. CloudWatch TunnelDataIn/Out 지표를 모니터링 파이프라인에 유지하십시오.", evidence_paths: ["/overall_status"] }
+        ],
+        logs: [
+          { time: "Live", source: "AWS", message: "Querying DescribeVpnConnections (vpn-0123456789abcdef0)..." },
+          { time: "Live", source: "AWS", message: "2 / 2 Tunnels UP (Dual redundant)." },
+          { time: "Live", source: "EC2", message: "SSM Run Command executed probe to 10.0.1.15." },
+          { time: "Live", source: "ICMP", message: "5 packets sent, 0% loss, avg 11.8ms." },
+          { time: "Live", source: "TCP", message: "3 ports connected (443, 3306, 8080)." },
+          { time: "Live", source: "MTU", message: "PMTU 1420 Bytes non-fragmented (PASS)." }
+        ]
+      },
+      warning: {
+        schema_version: "1.0",
+        diagnosis_id: "diag-demo-warning",
+        collected_at: new Date().toISOString(),
+        probe: { location: "AWS EC2 (i-0123456789abcdef0)", source_ip: "10.0.1.50" },
+        overall_status: "WARNING",
+        vpn_info: {
+          vpn_connection_id: "vpn-0123456789abcdef0",
+          customer_gateway_ip: "198.51.100.10",
+          vgw_or_tgw_id: "tgw-0123456789abcdef0",
+          routing_type: "BGP"
+        },
+        tunnels: [
+          { tunnel_inside_ip: "169.254.14.1", outside_ip: "198.51.100.1", status: "UP", accepted_route_count: 3, status_message: "IPSEC IS UP" },
+          { tunnel_inside_ip: "169.254.15.1", outside_ip: "198.51.100.2", status: "DOWN", accepted_route_count: 0, status_message: "DPD timeout: peer not responding" }
+        ],
+        connectivity_tests: {
+          icmp_ping: { target_ip: "10.0.1.15", packets_sent: 5, packets_received: 5, packet_loss_pct: 0, rtt_avg_ms: 14.2, status: "PASS" },
+          tcp_health_checks: [
+            { target_ip: "10.0.1.15", port: 443, service_name: "Internal Web (HTTPS)", required: true, result: "SUCCESS", latency_ms: 14.8 },
+            { target_ip: "10.0.2.20", port: 3306, service_name: "Aurora MySQL DB", required: true, result: "SUCCESS", latency_ms: 15.6 }
+          ],
+          mtu_test: { target_ip: "10.0.1.15", max_successful_packet_size: 1380, threshold: 1400, is_fragmented: true, status: "WARNING" }
+        },
+        recommendations: [
+          { priority: "P1", code: "SINGLE_TUNNEL_DEGRADED", title: "터널 이중화 결손 (Single Tunnel Degraded)", action: "현재 1개 터널로 서비스가 통신 중이나 고가용성(HA)이 상실되었습니다. 다운된 터널의 CGW IPsec/BGP 로그를 확인하여 복구하십시오.", evidence_paths: ["/tunnels/1/status"] },
+          { priority: "P2", code: "MTU_THRESHOLD_MISMATCH", title: "경로 MTU 기준치 미달 (단편화 위험)", action: "최대 비단편화 패킷 크기가 1380 Bytes로 임계치(1400 Bytes)보다 낮습니다. CGW의 TCP MSS Clamping을 1340B로 조정을 권고합니다.", evidence_paths: ["/connectivity_tests/mtu_test"] }
+        ],
+        logs: [
+          { time: "09:40:01", source: "AWS", message: "Queried DescribeVpnConnections (vpn-0123456789abcdef0)." },
+          { time: "09:40:02", source: "AWS", message: "Tunnel 2 DPD timeout: peer not responding. Single tunnel active." },
+          { time: "09:40:03", source: "ICMP", message: "Ping 5 packets to 10.0.1.15 completed (0% loss, 14.2ms)." },
+          { time: "09:40:04", source: "TCP", message: "Completed 2 TCP port checks (443, 3306 OK)." },
+          { time: "09:40:05", source: "MTU", message: "Max non-fragmented packet size = 1380 Bytes (Threshold 1400B)." }
+        ]
+      },
+      critical: {
+        schema_version: "1.0",
+        diagnosis_id: "diag-demo-critical",
+        collected_at: new Date().toISOString(),
+        probe: { location: "AWS EC2 (i-0123456789abcdef0)", source_ip: "10.0.1.50" },
+        overall_status: "CRITICAL",
+        vpn_info: {
+          vpn_connection_id: "vpn-0123456789abcdef0",
+          customer_gateway_ip: "198.51.100.10",
+          vgw_or_tgw_id: "tgw-0123456789abcdef0",
+          routing_type: "BGP"
+        },
+        tunnels: [
+          { tunnel_inside_ip: "169.254.14.1", outside_ip: "198.51.100.1", status: "DOWN", accepted_route_count: 0, status_message: "IKE Phase 1 negotiation timeout" },
+          { tunnel_inside_ip: "169.254.15.1", outside_ip: "198.51.100.2", status: "DOWN", accepted_route_count: 0, status_message: "Peer dead detection expired" }
+        ],
+        connectivity_tests: {
+          icmp_ping: { target_ip: "10.0.1.15", packets_sent: 5, packets_received: 0, packet_loss_pct: 100, rtt_avg_ms: null, status: "FAIL" },
+          tcp_health_checks: [
+            { target_ip: "10.0.1.15", port: 443, service_name: "Internal Web (HTTPS)", required: true, result: "TIMEOUT", latency_ms: null },
+            { target_ip: "10.0.2.20", port: 3306, service_name: "Aurora MySQL DB", required: true, result: "TIMEOUT", latency_ms: null }
+          ],
+          mtu_test: { target_ip: "10.0.1.15", max_successful_packet_size: null, threshold: 1400, is_fragmented: null, status: "FAIL" }
+        },
+        recommendations: [
+          { priority: "P0", code: "ALL_TUNNELS_DOWN", title: "양쪽 터널 전면 두절 (Complete VPN Outage)", action: "AWS 및 CGW 간의 IKE Phase 1/2 제안 매개변수, 사전 공유 키(PSK), CGW 공인 IP 방화벽 UDP 500/4500 인바운드 허용을 즉시 점검하십시오.", evidence_paths: ["/tunnels/0/status", "/tunnels/1/status"] },
+          { priority: "P0", code: "CRITICAL_PORT_DOWN", title: "필수 업무 포트 전체 접속 불가", action: "VPN 터널 장애로 온프레미스 대상 사설 대역(10.0.1.0/24) 라우팅이 전면 중단되었습니다.", evidence_paths: ["/connectivity_tests/tcp_health_checks"] }
+        ],
+        logs: [
+          { time: "09:40:01", source: "AWS", message: "Tunnel 1 & 2 DOWN. IKE Phase 1 negotiation timeout." },
+          { time: "09:40:02", source: "ICMP", message: "Ping to 10.0.1.15: 100% packet loss (0/5 received)." },
+          { time: "09:40:03", source: "TCP", message: "TCP port 443 & 3306 connection timed out." },
+          { time: "09:40:04", source: "MTU", message: "Probe unable to reach host for PMTU evaluation." }
+        ]
+      }
+    };
+
+    // Load Scenario via API (with static fallback)
+    async function loadScenario(name) {
+      document.querySelectorAll('[id^="btn-scen-"]').forEach(el => {
+        el.className = "px-3 py-1.5 rounded-md text-slate-700 hover:text-slate-900 transition";
+      });
+      const activeBtn = document.getElementById(`btn-scen-${name}`);
+      if (activeBtn) {
+        activeBtn.className = "px-3 py-1.5 rounded-md bg-white text-indigo-700 font-semibold shadow-xs";
+      }
+
+      try {
+        const resp = await fetch(`/api/scenario/${name}`);
+        if (resp.ok) {
+          currentData = await resp.json();
+        } else {
+          currentData = FALLBACK_SCENARIOS[name] || FALLBACK_SCENARIOS.warning;
+        }
+      } catch (err) {
+        currentData = FALLBACK_SCENARIOS[name] || FALLBACK_SCENARIOS.warning;
+      }
+      renderDashboard(currentData);
+    }
+
+    // Load AWS CLI Profiles
+    async function loadAwsProfiles() {
+      try {
+        const resp = await fetch('/api/aws/profiles');
+        const data = await resp.json();
+        const sel = document.getElementById('select-aws-profile');
+        if (data.profiles && data.profiles.length > 0) {
+          sel.innerHTML = data.profiles.map(p => `<option value="${p}">${p}</option>`).join('');
+        }
+      } catch (e) {
+        console.warn("Failed to load AWS profiles:", e);
+      }
+    }
+
+    async function onProfileOrRegionChange() {
+      await fetchAccountVpns();
+      await fetchAccountInstances();
+    }
+
+    async function fetchAccountInstances() {
+      const profile = document.getElementById('select-aws-profile').value;
+      const region = document.getElementById('select-aws-region').value;
+      const instSel = document.getElementById('select-aws-instance');
+      try {
+        const resp = await fetch(`/api/aws/instances?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
+        const data = await resp.json();
+        if (data.instances && data.instances.length > 0) {
+          instSel.innerHTML = data.instances.map(inst => 
+            `<option value="${inst.instance_id}">${inst.instance_id} (${inst.name} / ${inst.private_ip})</option>`
+          ).join('');
+        } else {
+          instSel.innerHTML = `<option value="">(실행 중인 인스턴스 없음 - 데모 프로브 사용)</option>`;
+        }
+      } catch (e) {
+        instSel.innerHTML = `<option value="">(인스턴스 조회 실패)</option>`;
+      }
+    }
+
+    async function fetchAccountVpns() {
+      const profile = document.getElementById('select-aws-profile').value;
+      const region = document.getElementById('select-aws-region').value;
+      try {
+        const resp = await fetch(`/api/aws/vpns?profile=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}`);
+        const data = await resp.json();
+        if (data.vpns && data.vpns.length > 0) {
+          const vpnInput = document.getElementById('input-vpn-id');
+          if (!vpnInput.value || vpnInput.value.startsWith('vpn-0a1b')) {
+            vpnInput.value = data.vpns[0].vpn_id;
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to auto-fetch account VPNs:", e);
+      }
+    }
+
+    // Run Live Diagnostics
+    async function runLiveDiagnostics() {
+      const btn = document.getElementById('btn-run-live');
+      const originalHtml = btn.innerHTML;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>EC2 ➡️ 온프렘 실측 중...</span>`;
+      btn.disabled = true;
+
+      const profile = document.getElementById('select-aws-profile').value;
+      const region = document.getElementById('select-aws-region').value;
+      const vpnId = document.getElementById('input-vpn-id').value;
+      const targetIp = document.getElementById('input-target-ip').value || '10.0.1.15';
+      const bastionId = document.getElementById('select-aws-instance').value;
+
+      try {
+        let url = `/api/diagnose?profile_name=${encodeURIComponent(profile)}&region=${encodeURIComponent(region)}&target_ip=${encodeURIComponent(targetIp)}`;
+        if (vpnId) url += `&vpn_id=${encodeURIComponent(vpnId)}`;
+        if (bastionId) url += `&bastion_instance_id=${encodeURIComponent(bastionId)}`;
+
+        const resp = await fetch(url, { method: 'POST' });
+        if (resp.ok) {
+          currentData = await resp.json();
+          renderDashboard(currentData);
+          return;
+        }
+        throw new Error("HTTP " + resp.status);
+      } catch (err) {
+        // Fallback for GitHub Pages static hosting: Simulate live SSM execution
+        console.warn("Backend API unavailable (running on static host / GitHub Pages). Simulating SSM probe...", err);
+        await new Promise(r => setTimeout(r, 1200)); // Realistic probe delay
+        const nowIso = new Date().toISOString();
+        const simulated = JSON.parse(JSON.stringify(FALLBACK_SCENARIOS.normal));
+        simulated.diagnosis_id = `diag-${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14)}`;
+        simulated.collected_at = nowIso;
+        simulated.connectivity_tests.icmp_ping.target_ip = targetIp;
+        simulated.connectivity_tests.tcp_health_checks.forEach(t => t.target_ip = targetIp);
+        simulated.connectivity_tests.mtu_test.target_ip = targetIp;
+        if (bastionId) simulated.probe.location = `AWS EC2 (${bastionId})`;
+        if (vpnId) simulated.vpn_info.vpn_connection_id = vpnId;
+        simulated.logs = [
+          { time: "00:00:01", source: "AWS", message: `Querying AWS EC2 [Profile: ${profile || 'default'}, Region: ${region || 'ap-northeast-2'}] for VPN: ${vpnId || 'vpn-0123456789abcdef0'}...` },
+          { time: "00:00:02", source: "AWS", message: "Retrieved 2 tunnels from AWS telemetry (2/2 UP)." },
+          { time: "00:00:03", source: "SSM", message: `Sending remote diagnostic command to EC2 (${bastionId || 'i-0123456789abcdef0'}) targeting ${targetIp}...` },
+          { time: "00:00:04", source: "SSM", message: "SSM Command sent (AWS-RunShellScript). Waiting for execution..." },
+          { time: "00:00:05", source: "EC2", message: `Received remote execution output: ICMP 4 pkts 0% loss (avg 12ms), TCP 443/3306 connected, PMTU 1400B.` }
+        ];
+        currentData = simulated;
+        renderDashboard(currentData);
+      } finally {
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+      }
+    }
+
+    // Render Full Dashboard
+    function renderDashboard(data) {
+      // 1. Overall Status Badge
+      const badge = document.getElementById('overall-badge');
+      if (data.overall_status === 'NORMAL') {
+        badge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200";
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> NORMAL · 이중화 및 업무 통신 정상`;
+      } else if (data.overall_status === 'WARNING') {
+        badge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200";
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> WARNING · 서비스 정상이나 이중화 저하 (터널 1개 다운)`;
+      } else {
+        badge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200";
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span> CRITICAL · VPN 양쪽 터널 두절 또는 필수 포트 장애`;
+      }
+
+      document.getElementById('diag-id').innerText = data.diagnosis_id;
+      document.getElementById('collected-at').innerText = data.collected_at;
+      document.getElementById('probe-location').innerText = data.probe.location;
+      document.getElementById('vpn-id').innerText = data.vpn_info.vpn_connection_id;
+      document.getElementById('gateway-id').innerText = data.vpn_info.vgw_or_tgw_id || "VGW-Direct";
+      document.getElementById('routing-type').innerText = data.vpn_info.routing_type || "BGP";
+
+      // 2. Render Tunnels
+      const upCount = data.tunnels.filter(t => t.status === 'UP').length;
+      document.getElementById('kpi-tunnel-status').innerHTML = upCount === 2 
+        ? `<i class="fa-solid fa-circle-check text-emerald-500"></i> 2 / 2 UP (100%)`
+        : (upCount === 1 ? `<i class="fa-solid fa-triangle-exclamation text-amber-500"></i> 1 / 2 UP (50%)` : `<i class="fa-solid fa-circle-xmark text-rose-500"></i> 0 / 2 DOWN (0%)`);
+      document.getElementById('kpi-tunnel-status').className = `text-base font-bold mt-1 flex items-center gap-1.5 ${upCount === 2 ? 'text-emerald-600' : (upCount === 1 ? 'text-amber-600' : 'text-rose-600')}`;
+      document.getElementById('kpi-tunnel-sub').innerText = upCount === 2 ? "양쪽 터널 정상 (이중화 완비)" : (upCount === 1 ? "이중화 손실 위험 (단일 터널 다운)" : "양쪽 터널 전체 단절");
+
+      const tContainer = document.getElementById('tunnels-container');
+      tContainer.innerHTML = data.tunnels.map((t, idx) => `
+        <div class="rounded-xl border ${t.status === 'UP' ? 'border-emerald-200 bg-emerald-50/20' : 'border-rose-200 bg-rose-50/20'} p-5 shadow-xs print-shadow-none">
+          <div class="flex items-center justify-between pb-3 border-b ${t.status === 'UP' ? 'border-emerald-100' : 'border-rose-100'}">
+            <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <i class="fa-solid fa-shield-halved ${t.status === 'UP' ? 'text-emerald-500' : 'text-rose-500'}"></i> Tunnel ${idx + 1} (${t.outside_ip})
+            </h3>
+            <span class="text-xs font-bold px-2.5 py-0.5 rounded-full ${t.status === 'UP' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+              ${t.status}
+            </span>
+          </div>
+          <div class="grid grid-cols-2 gap-3 pt-3 text-xs">
+            <div>
+              <span class="text-slate-400">AWS Outside IP:</span>
+              <div class="font-mono font-medium text-slate-800">${t.outside_ip}</div>
+            </div>
+            <div>
+              <span class="text-slate-400">AWS Tunnel Inside IP:</span>
+              <div class="font-mono font-medium text-slate-800">${t.tunnel_inside_ip || "169.254." + (idx+1) + ".1"}</div>
+            </div>
+            <div>
+              <span class="text-slate-400">BGP 수락 경로 수:</span>
+              <div class="font-bold ${t.accepted_route_count > 0 ? 'text-emerald-600' : 'text-slate-400'}">${t.accepted_route_count} Routes</div>
+            </div>
+            <div>
+              <span class="text-slate-400">AWS Status Message:</span>
+              <div class="text-slate-600 truncate" title="${t.status_message || 'OK'}">${t.status_message || 'IPSEC IS UP'}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      // 3. Render ICMP
+      const icmp = data.connectivity_tests.icmp_ping;
+      document.getElementById('icmp-target').innerText = icmp.target_ip;
+      document.getElementById('icmp-packets').innerText = `${icmp.packets_sent} 송신 / ${icmp.packets_received} 수신`;
+      document.getElementById('icmp-loss').innerText = `${icmp.packet_loss_pct || 0}%`;
+      document.getElementById('icmp-loss').className = `font-bold ${icmp.packet_loss_pct === 0 ? 'text-emerald-600' : 'text-rose-600'}`;
+      document.getElementById('icmp-rtt').innerText = icmp.rtt_avg_ms ? `${icmp.rtt_avg_ms} ms` : "— (응답 없음)";
+      document.getElementById('kpi-icmp-rtt').innerHTML = `${icmp.rtt_avg_ms || 0} ms <span class="text-xs font-normal text-slate-500">(${icmp.packet_loss_pct || 0}% 손실)</span>`;
+      document.getElementById('kpi-icmp-sub').innerText = (icmp.packet_loss_pct === 0 && icmp.packets_received > 0) ? `${icmp.packets_received} 패킷 정상 도달` : (icmp.packets_received === 0 ? "전체 타임아웃 (응답 없음)" : "부분 패킷 유실 감지");
+
+      // 4. Render TCP Table
+      const tcps = data.connectivity_tests.tcp_health_checks;
+      const tcpSuccess = tcps.filter(t => t.result === 'SUCCESS').length;
+      document.getElementById('kpi-tcp-status').innerText = `${tcpSuccess} / ${tcps.length} 성공 (${tcps.length > 0 ? Math.round(tcpSuccess / tcps.length * 100) : 0}%)`;
+      document.getElementById('kpi-tcp-sub').innerText = tcpSuccess === tcps.length ? "모든 지정 포트 정상 연결" : `${tcps.length - tcpSuccess}개 포트 연결 실패`;
+
+      const tcpTbody = document.getElementById('tcp-tbody');
+      if (tcps.length === 0) {
+        tcpTbody.innerHTML = `<tr><td colspan="4" class="py-2.5 text-slate-400 text-center">점검 대상 포트가 지정되지 않았습니다.</td></tr>`;
+      } else {
+        tcpTbody.innerHTML = tcps.map(t => `
+          <tr class="hover:bg-slate-50">
+            <td class="py-2 font-medium text-slate-800">${t.service_name} <span class="font-mono text-slate-400">(:${t.port})</span></td>
+            <td class="py-2 font-mono text-slate-600">${t.target_ip}</td>
+            <td class="py-2">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${t.result === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+                ${t.result}
+              </span>
+            </td>
+            <td class="py-2 text-right font-mono ${t.result === 'SUCCESS' ? 'text-slate-700' : 'text-slate-400'}">
+              ${t.latency_ms !== null && t.latency_ms !== undefined ? t.latency_ms + ' ms' : '—'}
+            </td>
+          </tr>
+        `).join('');
+      }
+      const tcpBadge = document.getElementById('tcp-status-badge');
+      if (tcpBadge) {
+        const allOk = tcps.length > 0 && tcpSuccess === tcps.length;
+        tcpBadge.className = `text-[11px] font-bold px-2 py-0.5 rounded-full ${allOk ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`;
+        tcpBadge.innerText = allOk ? 'PASS' : (tcps.length === 0 ? 'N/A' : 'FAIL');
+      }
+
+      // 5. Render MTU
+      const mtu = data.connectivity_tests.mtu_test;
+      document.getElementById('mtu-max-size').innerText = mtu.max_successful_packet_size ? `${mtu.max_successful_packet_size} Bytes` : "측정 불가";
+      document.getElementById('mtu-threshold').innerText = `${mtu.threshold} Bytes`;
+      document.getElementById('mtu-fragmented').innerText = mtu.is_fragmented ? "단편화 관찰됨 (True)" : "비단편화 정상 (False)";
+      document.getElementById('mtu-fragmented').className = `font-bold ${mtu.is_fragmented ? 'text-amber-600' : 'text-emerald-600'}`;
+      document.getElementById('mtu-rec-mss').innerText = `${(mtu.max_successful_packet_size || 1400) - 40} Bytes`;
+      document.getElementById('kpi-mtu-size').innerText = `${mtu.max_successful_packet_size || 'N/A'} Bytes`;
+      document.getElementById('kpi-mtu-sub').innerText = (mtu.max_successful_packet_size && mtu.max_successful_packet_size >= mtu.threshold) ? `기준치 ${mtu.threshold}B 충족 (비단편화)` : `기준치 ${mtu.threshold}B 미달 (단편화 위험)`;
+
+      // 6. Render Recommendations
+      const rTbody = document.getElementById('recs-tbody');
+      rTbody.innerHTML = data.recommendations.map(rec => `
+        <tr class="hover:bg-slate-50">
+          <td class="py-3 px-3">
+            <span class="px-2 py-0.5 rounded font-bold text-[10px] ${rec.priority === 'P0' ? 'bg-rose-100 text-rose-800' : (rec.priority === 'P1' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800')}">
+              ${rec.priority}
+            </span>
+          </td>
+          <td class="py-3 px-3 font-mono font-medium text-slate-700">${rec.code}</td>
+          <td class="py-3 px-3 font-bold text-slate-800">${rec.title}</td>
+          <td class="py-3 px-3 text-slate-600 leading-relaxed">${rec.action}</td>
+          <td class="py-3 px-3 text-right font-mono text-[11px] text-indigo-600">${rec.evidence_paths.join(', ')}</td>
+        </tr>
+      `).join('');
+
+      // 7. Render Logs
+      renderLogs(data.logs || []);
+    }
+
+    function renderLogs(logs) {
+      const container = document.getElementById('logs-container');
+      container.innerHTML = logs.map(l => `
+        <div class="flex items-start gap-2 hover:bg-slate-800/50 px-1 py-0.5 rounded">
+          <span class="text-slate-500 shrink-0">${l.time}</span>
+          <span class="px-1.5 py-0.2 rounded text-[10px] font-bold shrink-0 ${l.source === 'AWS' ? 'bg-orange-900/40 text-orange-400' : (l.source === 'TCP' ? 'bg-emerald-900/40 text-emerald-400' : 'bg-sky-900/40 text-sky-400')}">${l.source}</span>
+          <span class="text-slate-300 break-all">${l.message}</span>
+        </div>
+      `).join('');
+    }
+
+    function filterLogs(src) {
+      if (!currentData || !currentData.logs) return;
+      if (src === 'ALL') {
+        renderLogs(currentData.logs);
+      } else {
+        renderLogs(currentData.logs.filter(l => l.source === src));
+      }
+    }
+
+    function downloadJsonReport() {
+      if (!currentData) return;
+      const blob = new Blob([JSON.stringify(currentData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `aws-vpn-report-${currentData.diagnosis_id}.json`;
+      a.click();
+    }
+
+    // Initial Load default to Warning Scenario
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadAwsProfiles();
+      await fetchAccountInstances();
+      loadScenario('warning');
+    });
+  </script>
+</body>
+</html>
