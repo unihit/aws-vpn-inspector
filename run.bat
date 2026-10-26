@@ -10,15 +10,21 @@ cd /d "%~dp0"
 
 :: 1. Check if main.py exists. If not, auto-download repo from GitHub!
 if not exist "main.py" (
-    echo [*] main.py를 찾을 수 없습니다. GitHub에서 최신 코드를 다운로드합니다...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/unihit/aws-vpn-inspector/archive/refs/heads/main.zip' -OutFile 'aws-vpn-inspector.zip'; Expand-Archive -Path 'aws-vpn-inspector.zip' -DestinationPath '.' -Force; Move-Item -Path 'aws-vpn-inspector-main\*' -Destination '.' -Force; Remove-Item -Path 'aws-vpn-inspector-main' -Recurse -Force; Remove-Item 'aws-vpn-inspector.zip' -Force"
-    if not exist "main.py" (
-        echo [!] 다운로드 실패. 인터넷 연결 또는 GitHub 저장소 접근 권한을 확인하세요.
-        pause
-        exit /b 1
+    if exist "aws-vpn-inspector-main\main.py" (
+        cd "aws-vpn-inspector-main"
+    ) else (
+        echo [*] 소스 코드를 찾을 수 없습니다. GitHub에서 최신 코드를 다운로드합니다...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/unihit/aws-vpn-inspector/archive/refs/heads/main.zip' -OutFile 'aws-vpn-inspector.zip'; Expand-Archive -Path 'aws-vpn-inspector.zip' -DestinationPath '.' -Force; Remove-Item 'aws-vpn-inspector.zip' -Force"
+        if exist "aws-vpn-inspector-main\main.py" (
+            cd "aws-vpn-inspector-main"
+        ) else (
+            echo [!] 다운로드 실패. 인터넷 연결 또는 GitHub 저장소 접근 권한을 확인하세요.
+            pause
+            exit /b 1
+        )
+        echo [*] 다운로드 및 압축 해제 완료!
+        echo.
     )
-    echo [*] 다운로드 및 압축 해제 완료!
-    echo.
 )
 
 :: 2. Check Python installation
