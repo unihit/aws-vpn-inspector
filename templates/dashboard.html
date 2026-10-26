@@ -33,7 +33,7 @@
         </div>
       </div>
       <div class="flex items-center space-x-2">
-        <a href="https://raw.githubusercontent.com/unihit/aws-vpn-inspector/main/run.bat" download="run.bat" class="px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-xs transition flex items-center gap-1.5" title="내 PC에서 로컬 AWS 인증을 즉시 연동하는 원클릭 배치 파일 다운로드">
+        <a href="https://github.com/unihit/aws-vpn-inspector/releases/latest/download/run.bat" onclick="downloadRunBat(event)" class="px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-xs transition flex items-center gap-1.5" title="내 PC에서 로컬 AWS 인증을 즉시 연동하는 원클릭 배치 파일 다운로드">
           <i class="fa-solid fa-download"></i> run.bat 다운로드
         </a>
         <button onclick="window.print()" class="px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-xs transition flex items-center gap-1.5">
@@ -340,6 +340,28 @@
     let apiBase = window.location.origin.includes('github.io') ? 'http://127.0.0.1:8085' : '';
     let isLocalAgentConnected = false;
 
+    // Force Direct Download for run.bat via Blob
+    async function downloadRunBat(e) {
+      if (e) e.preventDefault();
+      try {
+        const url = window.location.origin.includes('github.io') ? 'run.bat' : 'https://raw.githubusercontent.com/unihit/aws-vpn-inspector/main/run.bat';
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('Fetch failed');
+        const content = await resp.text();
+        const blob = new Blob([content], { type: 'application/octet-stream' });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = 'run.bat';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      } catch (err) {
+        window.location.href = 'https://github.com/unihit/aws-vpn-inspector/releases/latest/download/run.bat';
+      }
+    }
+
     // Check Local Agent Connection (for GitHub Pages & Localhost)
     async function checkAgentConnection() {
       const banner = document.getElementById('agent-status-banner');
@@ -358,7 +380,7 @@
         isLocalAgentConnected = false;
         if (banner && window.location.origin.includes('github.io')) {
           banner.className = "px-3.5 py-2 rounded-lg text-xs bg-amber-50 text-amber-800 border border-amber-200 flex items-center justify-between";
-          banner.innerHTML = `<span><i class="fa-solid fa-circle-info text-amber-500"></i> <b>데모 시뮬레이션 모드:</b> 내 PC의 실제 AWS 계정과 연동하려면 상단 <b>[run.bat 다운로드]</b>를 실행하세요.</span><a href="https://raw.githubusercontent.com/unihit/aws-vpn-inspector/main/run.bat" download="run.bat" class="underline font-bold text-amber-900">run.bat 받기</a>`;
+          banner.innerHTML = `<span><i class="fa-solid fa-circle-info text-amber-500"></i> <b>데모 시뮬레이션 모드:</b> 내 PC의 실제 AWS 계정과 연동하려면 상단 <b>[run.bat 다운로드]</b>를 실행하세요.</span><a href="https://github.com/unihit/aws-vpn-inspector/releases/latest/download/run.bat" onclick="downloadRunBat(event)" class="underline font-bold text-amber-900 cursor-pointer">run.bat 받기</a>`;
           banner.classList.remove('hidden');
         }
       }
